@@ -1,0 +1,253 @@
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+
+# --- 1. Parâmetros Iniciais ---
+f = 3  # Frequência em GHz
+d2D = 25  # Distância em metros
+v = 3  # Velocidade em Km/h
+
+# Cálculo p_los (probabilidade LoS)
+p_los = np.exp(-(d2D - 6.5) / 32.6) * 0.32
+
+# Gerador de variável aleatória uniforme
+rng = np.random.default_rng()
+u = rng.uniform(0, 1)
+amostra = 1 if u < p_los else 0
+
+if amostra == 1:
+    estado = "LoS"
+    μds = -0.01 * np.log10(1 + f) - 7.692  # Espalhamento de atraso (στ)
+    μds_linear = np.power(10.0, μds)
+    sigmads = 0.18
+    sigmads_linear = sigmads * math.log(10)
+
+    μk = 7  # Fator de Rice (K) em dB
+    μk_linear = 10 ** (μk / 10)
+    sigmak = 4
+    sigmak_linear = 10 ** (sigmak / 10)
+
+    μaod = 1.60  # Espalhamento azimutal de saída (AoD)
+    μaod_linear = 10**μaod
+    sigmaaod = 0.18
+    sigmaaod_linear = sigmaaod * math.log(10)
+
+    μaoa = -0.19 * np.log10(1 + f) + 1.781  # Espalhamento azimutal de chegada (AoA)
+    μaoa_linear = 10**μaoa
+    sigmaaoa = 0.12 * np.log10(1 + f) + 0.119
+    sigmaaoa_linear = sigmaaoa * math.log(10)
+
+    μzod = -1.43 * np.log10(1 + f) + 2.228  # Espalhamento em elevação de saída (ZoD)
+    sigmazod = 0.13 * np.log10(1 + f) + 0.30
+    μzod_linear = 10**μzod
+    sigmazod_linear = 10**sigmazod
+
+    μzoa = -0.26 * np.log10(1 + f) + 1.44  # Espalhamento em elevação de chegada (ZoA)
+    sigmazoa = -0.04 * np.log10(1 + f) + 0.264
+    μzoa_linear = 10**μzoa
+    sigmazoa_linear = 10**sigmazoa
+else:
+    estado = "NLoS"
+    μds = -0.28 * np.log10(1 + f) - 7.173  # Espalhamento de atraso (στ)
+    μds_linear = np.power(10.0, μds)
+    sigmads = 0.10 * np.log10(1 + f) + 0.055
+    sigmads_linear = sigmads * math.log(10)
+
+    μk_linear = 0  # Fator de Rice - Nulo para NLoS
+    sigmak_linear = 0
+
+    μaod = 1.62  # Espalhamento azimutal de saída (AoD)
+    μaod_linear = 10**μaod
+    sigmaaod = 0.25
+    sigmaaod_linear = sigmaaod * math.log(10)
+
+    μaoa = -0.11 * np.log10(1 + f) + 1.863  # Espalhamento azimutal de chegada (AoA)
+    μaoa_linear = 10**μaoa
+    sigmaaoa = 0.12 * np.log10(1 + f) + 0.059
+    sigmaaoa_linear = sigmaaoa * math.log(10)
+
+    μzod = 1.08  # Espalhamento em elevação de saída (ZoD)
+    sigmazod = 0.36
+    μzod_linear = 10**μzod
+    sigmazod_linear = 10**sigmazod
+
+    μzoa = -0.15 * np.log10(1 + f) + 1.387  # Espalhamento em elevação de chegada (ZoA)
+    sigmazoa = -0.09 * np.log10(1 + f) + 0.746
+    μzoa_linear = 10**μzoa
+    sigmazoa_linear = 10**sigmazoa
+
+# Aplicando os limites especificados
+sigmazoa_limitado = min(sigmazoa_linear, 104.0)
+sigmazod_limitado = min(sigmazod_linear, 104.0)
+sigmaaoa_limitado = min(sigmaaoa_linear, 52.0)
+sigmaaod_limitado = min(sigmaaod_linear, 52.0)
+
+# --- 2. Parâmetros de Pequena Escala e Atrasos (τn) ---
+n = 100  # Número de componentes multipercurso
+rτ = 3.6 if estado == "LoS" else 3.0  # Fator de Proporcionalidade (rτ)
+
+στ = μds_linear  # Média do atraso
+μτ = rτ * στ
+
+τ2 = rng.exponential(scale=μτ, size=n)
+τ = τ2 - np.min(τ2)  # Normalização (deslocar o menor atraso para a origem)
+τn = np.sort(τ)  # Ordenação
+
+σξ = 6.0 if estado == "LoS" else 3.0  # Potência Multipercurso (dB)
+
+ξn = rng.uniform(0, σξ**2, size=n)
+α2n_ = np.exp(-τn * (rτ - 1) / (rτ * στ)) * (10 ** (-ξn / 10))
+
+α2n = np.zeros(n)
+if estado == "LoS":
+    kr = rng.normal(loc=μk_linear, scale=sigmak_linear)
+    kr = max(kr, 1e-6)
+    Ωc_ = np.sum(α2n_[1:])
+    if Ωc_ == 0:
+        Ωc_ = 1e-300
+    α2n[0] = kr / (kr + 1)
+    α2n[1:] = (1 / (kr + 1)) * (α2n_[1:] / Ωc_)
+else:
+    Ωc_ = np.sum(α2n_)
+    if Ωc_ == 0:
+        Ωc_ = 1e-300
+    α2n = α2n_ / Ωc_
+
+# Amplitude de ganho do canal alpha_n para cada percurso
+alpha_n = np.sqrt(α2n)
+
+# --- 3. Ângulos de Chegada (AoA e ZoA) ---
+phi_LoS_prime = α2n[0]
+sigma_phi_AoA = sigmaaoa_limitado
+max_alpha2 = np.max(α2n)
+r = α2n / max_alpha2
+r = np.maximum(r, 1e-12)
+phi_double_prime = 1.42 * sigma_phi_AoA * np.sqrt(-np.log(r))
+
+un = rng.choice([-1, 1], size=n)  # Array aleatório de sinais (+1 ou -1)
+sigma_Y = sigmaaoa_limitado / 7.0
+Yn = rng.normal(loc=0.0, scale=sigma_Y, size=n)
+phi_prime = un * phi_double_prime + Yn + phi_LoS_prime
+
+if estado == "LoS":
+    phi_prime[0] = phi_LoS_prime
+
+θ_LoS_prime = α2n[0]
+σθ_zoa = sigmazoa_limitado
+θ_double_prime = 1.42 * σθ_zoa * np.sqrt(-np.log(r))
+un_zoa = rng.choice([-1, 1], size=n)
+sigma_Z = σθ_zoa / 7.0
+zn = rng.normal(loc=0.0, scale=sigma_Z, size=n)
+θ_prime = un_zoa * θ_double_prime + zn + θ_LoS_prime
+
+if estado == "LoS":
+    θ_prime[0] = θ_LoS_prime
+
+# --- 4. Vetores de Direção (r_n) e Desvio Doppler (ν_n) ---
+phi_rad = np.radians(phi_prime)
+theta_rad = np.radians(θ_prime)
+
+r_x = np.cos(phi_rad) * np.sin(theta_rad)
+r_y = np.sin(phi_rad) * np.sin(theta_rad)
+r_z = np.cos(theta_rad)
+r_n = np.vstack([r_x, r_y, r_z])
+
+c = 3e8
+fc = f * 1e9  # Frequência da portadora em Hz
+λ = c / fc
+v_r = v / 3.6  # Velocidade do recetor em m/s
+
+theta_v = np.radians(90.0)  # Movimento no plano horizontal
+phi_v = np.radians(0.0)  # Movimento ao longo do eixo X
+v_rx = v_r * np.array(
+    [
+        np.cos(phi_v) * np.sin(theta_v),
+        np.sin(phi_v) * np.sin(theta_v),
+        np.cos(theta_v),
+    ]
+)
+
+# Desvio Doppler para cada percurso
+nu_n = np.dot(v_rx, r_n) / λ
+
+# --- 5. Definição do Sinal Transmitido s~(t) ---
+δt = 1e-6  # Duração do pulso (1 µs)
+n_amostras = 10**5
+t_inicial = 0.0
+t_final = 5 * δt
+
+t = np.linspace(t_inicial, t_final, n_amostras)
+
+def gerar_pulso_transmitido(t_array, dt):
+    pulso = np.where((t_array >= 0) & (t_array <= dt), 1.0, 0.0)
+    amplitude_norm = 1.0 / np.sqrt(dt)
+    return (amplitude_norm * pulso).astype(np.complex128)
+
+s_tilde = gerar_pulso_transmitido(t, δt)
+
+# --- 6. Aplicação da Formulação do Sinal Recebido r~(t) ---
+def s_tilde_atrasado(t_array, tau, dt):
+    t_deslocado = t_array - tau
+    pulso = np.where((t_deslocado >= 0) & (t_deslocado <= dt), 1.0, 0.0)
+    amplitude_norm = 1.0 / np.sqrt(dt)
+    return (amplitude_norm * pulso).astype(np.complex128)
+
+r_tilde = np.zeros(n_amostras, dtype=np.complex128)
+
+for i in range(n):
+    # Termo de fase escalar constante da componente i
+    fase_constante = -1j * 2 * np.pi * (fc + nu_n[i]) * τn[i]
+
+    # Termo de fase variante no tempo devido ao desvio Doppler
+    fase_temporal = 1j * 2 * np.pi * nu_n[i] * t
+
+    # Coeficiente complexo do canal h_i(t)
+    coeficiente_n = alpha_n[i] * np.exp(fase_constante + fase_temporal)
+
+    # Pulso transmitido atrasado s~(t - tau_n)
+    s_atrasado = s_tilde_atrasado(t, τn[i], δt)
+
+    # Acumulação no sinal recebido final
+    r_tilde += coeficiente_n * s_atrasado
+
+# --- 7. Exibição de Resultados 
+print(f"Estado observado: {estado}")
+print(f"Total de componentes processadas (N): {len(nu_n)}")
+print(f"Comprimento de onda (λ): {λ:.4f} m")
+print(f"Velocidade do recetor (vr): {v_r:.2f} m/s")
+print(f"Desvio Doppler máximo teórico (f_dmax): {v_r / λ:.2f} Hz\n")
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+
+# Plot do Sinal Transmitido
+ax1.plot(t * 1e6, np.real(s_tilde), label=r"Re{$\tilde{s}(t)$}", color="b")
+ax1.set_ylabel("Amplitude")
+ax1.set_title(r"Sinal Transmitido $\tilde{s}(t)$ em Banda Base")
+ax1.grid(True)
+ax1.legend(loc="upper right")
+
+ax2.plot(
+    t * 1e6,
+    np.abs(r_tilde),
+    label=r"Sinal Transmitido $|\tilde{r}(t)|$",
+    color="purple",
+    linewidth=1.2,
+)
+ax2.plot(
+    t * 1e6,
+    np.real(r_tilde),
+    label=r"Re{$\tilde{r}(t)$}",
+    color="orange",
+    alpha=0.5,
+    linewidth=0.8,
+)
+ax2.set_xlabel("Tempo (µs)")
+ax2.set_ylabel("Amplitude")
+ax2.set_title(
+    r"Sinal Recebido $\tilde{r}(t)$ em Banda Base"
+)
+ax2.grid(True)
+ax2.legend(loc="upper right")
+
+plt.tight_layout()
+plt.show()

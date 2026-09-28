@@ -1,0 +1,61 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fft, fftshift, fftfreq
+
+# 1. Configuração dos Parâmetros do Sinal e da Simulação
+fs = 10**5          # Frequência de amostragem (Hz)
+T = 2             # Duração do sinal em segundos
+t = np.linspace(0, T, int(fs * T), endpoint=False)
+
+f_portadora = 3000  # Frequência central/portadora (Hz)
+f_desvio_max = 10  # Desvio Doppler máximo em Hz 
+# 2. Configuração do Multipercurso 
+num_caminhos = 100
+np.random.seed()  # Para reprodutibilidade
+
+# Gerando desvios Doppler aleatórios para cada caminho 
+desvios_caminhos = f_desvio_max * np.random.uniform(-1, 1, num_caminhos)
+
+# Atenuações (ganhos) para os caminhos (ex: Rayleigh fading)
+ganhos = np.random.rayleigh(scale=1.0, size=num_caminhos)
+ganhos = ganhos / np.sum(ganhos)  # Normalização de potência
+
+# Fases iniciais aleatórias para cada caminho
+fases_iniciais = np.random.uniform(0, 2 * np.pi, num_caminhos)
+
+# 3. Geração do Sinal Recebido com 100 Componentes Multipercurso
+sinal_recebido = np.zeros_like(t)
+
+for i in range(num_caminhos):
+    # Frequência de cada componente multipercurso
+    f_inst_caminho = f_portadora + desvios_caminhos[i]
+    # Contribuição do i-ésimo caminho ao sinal recebido
+    fase_caminho = 2 * np.pi * f_inst_caminho * t + fases_iniciais[i]
+    sinal_recebido += ganhos[i] * np.cos(fase_caminho)
+
+# 4. Cálculo da Transformada de Fourier (FFT) e Deslocamento para o Espectro Centralizado
+N = len(sinal_recebido)
+espectro = fft(sinal_recebido)
+espectro_centrado = fftshift(espectro)
+
+# Eixo de frequências em Hz corrigido para o espectro centralizado
+frequencias_hz = fftfreq(N, 1 / fs)
+frequencias_hz_centradas = fftshift(frequencias_hz)
+
+# Convertendo o eixo para "Domínio de Desvio Doppler (Hz)" em relação à portadora
+desvio_doppler_hz = frequencias_hz_centradas - f_portadora
+
+# 5. Plotagem do Gráfico (Espectro Doppler x Domínio de Desvio em Hz)
+plt.figure(figsize=(10, 6))
+plt.plot(desvio_doppler_hz, np.abs(espectro_centrado) / N, color='darkorange', linewidth=1.0)
+
+plt.title('Espectro Doppler - Canal Indoor', fontsize=14)
+plt.xlabel('Domínio de Desvio Doppler (Hz)', fontsize=12)
+plt.ylabel('Amplitude Espectral', fontsize=12)
+
+# Limitando a visão ao redor da faixa de desvio de interesse
+plt.xlim([-f_desvio_max * 1.3, f_desvio_max * 1.3])
+plt.grid(True, linestyle='--', alpha=0.6)
+
+plt.tight_layout()
+plt.show()
